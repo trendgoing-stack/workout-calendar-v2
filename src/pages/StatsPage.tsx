@@ -1,38 +1,86 @@
 import { useMemo, useState } from 'react'
+import type { Exercise, RecordType } from '../types'
 import { useApp } from '../store/useApp'
 import {
   buildBuckets,
-  exerciseNameSuggestions,
   exerciseProgress,
   frequencyByPeriod,
   summarize,
+  usedExerciseIds,
 } from '../lib/selectors'
-import { LineChart, StackedBarChart } from '../components/Charts'
+import type { ExerciseProgressPoint } from '../lib/selectors'
+import { LineChart } from '../components/Charts'
+import { StackedBarChart } from '../components/Charts'
 import { SessionCard } from '../components/SessionCard'
 import { MuscleTag } from '../components/MuscleTag'
 import { formatDateLabel } from '../lib/date'
+import { formatSeconds } from '../lib/format'
+import { resolveExercise } from '../lib/exerciseCatalog'
+import { resolveGroup } from '../lib/colors'
 
 type Period = 'week' | 'month'
-type Metric = 'maxWeight' | 'estimated1RM' | 'volume'
+type WeightMetric = 'maxWeight' | 'estimated1RM' | 'volume'
+type Metric = WeightMetric | 'maxReps' | 'maxSeconds'
 
-const METRIC_LABELS: Record<Metric, string> = {
+const WEIGHT_METRIC_LABELS: Record<WeightMetric, string> = {
   maxWeight: '最大重量',
   estimated1RM: '推定1RM',
   volume: 'ボリューム',
 }
 
-export function StatsPage() {
-  const { sessions, muscleGroups, groupMap, settings } = useApp()
-  const [period, setPeriod] = useState<Period>('week')
-  const [metric, setMetric] = useState<Metric>('maxWeight')
-  const [selectedExercise, setSelectedExercise] = useState('')
+/** 記録タイプごとの指標（weightReps は選択式） */
+function metricFor(recordType: RecordType, weightMetric: WeightMetric): Metric {
+  if (recordType === 'weightReps') return weightMetric
+  if (recordType === 'reps') return 'maxReps'
+  return 'maxSeconds'
+}
 
-  const exerciseNames = useMemo(() => exerciseNameSuggestions(sessions), [sessions])
+const METRIC_TITLES: Record<Metric, string> = {
+  ...WEIGHT_METRIC_LABELS,
+  maxReps: '1セットの最大回数',
+  maxSeconds: '最長秒数',
+}
+
+const toPoints = (progress: ExerciseProgressPoint[], metric: Metric) =>
+  progress
+    .filter((p) => p[metric] > 0)
+    .map((p) => ({ label: formatDateLabel(p.date).replace(/\(.\)$/, ''), value: p[metric] }))
+
+export function StatsPage() {
+  const { sessions, muscleGroups, groupMap, settings, exerciseById } = useApp()
+  const [period, setPeriod] = useState<Period>('week')
+  const [weightMetric, setWeightMetric] = useState<WeightMetric>('maxWeight')
+  const [selectedExercise, setSelectedExercise] = useState('')
+  const unit = settings.weightUnit
+
+  /** 記録のある種目（よく行う順） */
+  const usedIds = useMemo(() => usedExerciseIds(sessions), [sessions])
+  /** 種目の選択肢を部位ごとにまとめたもの（部位の表示順） */
+  const exerciseGroups = useMemo(() => {
+    const byPart = new Map<string, Exercise[]>()
+    for (const id of usedIds) {
+      const entry = sessions.flatMap((s) => s.exercises).find((e) => e.exerciseId === id)
+      if (!entry) continue
+      const exercise = resolveExercise(exerciseById, entry)
+      const part = exercise.bodyPart
+      const list = byPart.get(part)
+      if (list) list.push(exercise)
+      else byPart.set(part, [exercise])
+    }
+    const order = new Map(muscleGroups.map((g, i) => [g.id, i]))
+    return [...byPart.entries()]
+      .sort((a, b) => (order.get(a[0]) ?? 999) - (order.get(b[0]) ?? 999))
+      .map(([part, exercises]) => ({ group: resolveGroup(groupMap, part), exercises }))
+  }, [usedIds, sessions, exerciseById, muscleGroups, groupMap])
+
   // 未選択、または選択中の種目が消えた場合は、いちばんよく行っている種目を表示する
-  const exercise =
-    selectedExercise && exerciseNames.includes(selectedExercise)
-      ? selectedExercise
-      : (exerciseNames[0] ?? '')
+  const exerciseId =
+    selectedExercise && usedIds.includes(selectedExercise) ? selectedExercise : (usedIds[0] ?? '')
+  const exercise = exerciseGroups
+    .flatMap((g) => g.exercises)
+    .find((e) => e.id === exerciseId)
+  const recordType = exercise?.recordType ?? 'weightReps'
+  const metric = metricFor(recordType, weightMetric)
 
   const rows = useMemo(() => {
     const buckets = buildBuckets(
@@ -54,16 +102,14 @@ export function StatsPage() {
   }, [rows])
 
   const progress = useMemo(
-    () => (exercise ? exerciseProgress(sessions, exercise) : []),
-    [sessions, exercise],
+    () => (exerciseId ? exerciseProgress(sessions, exerciseId) : []),
+    [sessions, exerciseId],
   )
-
-  const points = useMemo(
-    () =>
-      progress
-        .filter((p) => p[metric] > 0)
-        .map((p) => ({ label: formatDateLabel(p.date).replace(/\(.\)$/, ''), value: p[metric] })),
-    [progress, metric],
+  const points = useMemo(() => toPoints(progress, metric), [progress, metric])
+  /** 加重した日の最大重量（reps タイプで加重した日だけ） */
+  const weightedPoints = useMemo(
+    () => (recordType === 'reps' ? toPoints(progress, 'maxWeight') : []),
+    [progress, recordType],
   )
 
   const stats = useMemo(
@@ -72,10 +118,14 @@ export function StatsPage() {
   )
 
   const recent = sessions.slice(0, 10)
-  const best = progress.reduce(
-    (acc, p) => (p[metric] > acc ? p[metric] : acc),
-    0,
-  )
+  const best = progress.reduce((acc, p) => (p[metric] > acc ? p[metric] : acc), 0)
+  const bestLabel =
+    metric === 'maxSeconds'
+      ? formatSeconds(best)
+      : metric === 'maxReps'
+        ? `${best}回`
+        : `${(Math.round(best * 10) / 10).toLocaleString()}${unit}`
+  const unitLabel = metric === 'maxSeconds' ? '秒' : metric === 'maxReps' ? '回' : unit
 
   return (
     <div className="space-y-4 px-4 pb-4 pt-4">
@@ -136,7 +186,7 @@ export function StatsPage() {
       <section className="rounded-2xl bg-white p-4 shadow-sm">
         <h2 className="mb-3 text-sm font-semibold text-slate-700">種目ごとの推移</h2>
 
-        {exerciseNames.length === 0 ? (
+        {usedIds.length === 0 ? (
           <p className="py-8 text-center text-sm text-slate-400">
             記録を追加するとグラフが表示されます
           </p>
@@ -144,38 +194,49 @@ export function StatsPage() {
           <>
             <div className="flex gap-2">
               <select
-                value={exercise}
+                value={exerciseId}
+                aria-label="種目"
                 onChange={(e) => setSelectedExercise(e.target.value)}
-                className="min-w-0 flex-1 rounded-lg border border-slate-200 px-2 py-2 text-sm outline-none focus:border-indigo-400"
+                className="min-w-0 flex-1 rounded-lg border border-slate-200 px-2 py-2 outline-none focus:border-indigo-400"
               >
-                {exerciseNames.map((name) => (
-                  <option key={name} value={name}>
-                    {name}
-                  </option>
+                {exerciseGroups.map(({ group, exercises }) => (
+                  <optgroup key={group.id} label={group.name}>
+                    {exercises.map((e) => (
+                      <option key={e.id} value={e.id}>
+                        {e.name}
+                      </option>
+                    ))}
+                  </optgroup>
                 ))}
               </select>
-              <select
-                value={metric}
-                onChange={(e) => setMetric(e.target.value as Metric)}
-                className="rounded-lg border border-slate-200 px-2 py-2 text-sm outline-none focus:border-indigo-400"
-              >
-                {(Object.keys(METRIC_LABELS) as Metric[]).map((key) => (
-                  <option key={key} value={key}>
-                    {METRIC_LABELS[key]}
-                  </option>
-                ))}
-              </select>
+              {recordType === 'weightReps' && (
+                <select
+                  value={weightMetric}
+                  aria-label="指標"
+                  onChange={(e) => setWeightMetric(e.target.value as WeightMetric)}
+                  className="rounded-lg border border-slate-200 px-2 py-2 outline-none focus:border-indigo-400"
+                >
+                  {(Object.keys(WEIGHT_METRIC_LABELS) as WeightMetric[]).map((key) => (
+                    <option key={key} value={key}>
+                      {WEIGHT_METRIC_LABELS[key]}
+                    </option>
+                  ))}
+                </select>
+              )}
             </div>
 
             <div className="mt-2 text-xs text-slate-400">
-              最高 {(Math.round(best * 10) / 10).toLocaleString()}
-              {metric === 'volume' ? '' : settings.weightUnit} ・ 記録 {progress.length}回
+              {METRIC_TITLES[metric]} ・ 最高 {bestLabel} ・ 記録 {progress.length}回
             </div>
 
-            <LineChart
-              points={points}
-              unitLabel={metric === 'volume' ? '' : settings.weightUnit}
-            />
+            <LineChart points={points} unitLabel={metric === 'volume' ? '' : unitLabel} />
+
+            {weightedPoints.length > 0 && (
+              <div className="mt-3 border-t border-slate-100 pt-3">
+                <div className="text-xs text-slate-400">加重した日の最大重量</div>
+                <LineChart points={weightedPoints} unitLabel={unit} color="#f59e0b" height={140} />
+              </div>
+            )}
           </>
         )}
       </section>

@@ -1,40 +1,27 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useMemo, useState } from 'react'
 import type { ReactNode } from 'react'
-import type {
-  AppData,
-  Routine,
-  Settings,
-  WorkoutSession,
-} from '../types'
+import type { AppData, Exercise, Routine, Settings, WorkoutSession } from '../types'
 import { repository } from '../lib/repository'
-import { createEmptyAppData, createSampleData, normalizeAppData } from '../lib/normalize'
+import { createSampleData } from '../lib/normalize'
+import { commitPlan } from '../lib/dataImport'
+import type { DataPlan } from '../lib/dataImport'
+import { buildCatalog, exerciseMap } from '../lib/exerciseCatalog'
 import { groupSessionsByDate, muscleGroupMap } from '../lib/selectors'
 import { AppContext } from './context'
 import type { AppContextValue } from './context'
 
-export function AppProvider({ children }: { children: ReactNode }) {
-  const [data, setData] = useState<AppData>(createEmptyAppData)
-  const [loading, setLoading] = useState(true)
+/**
+ * @param initialData 起動時に（画面を描画する前に）読み込んだデータ。src/main.tsx を参照
+ */
+export function AppProvider({
+  initialData,
+  children,
+}: {
+  initialData: AppData
+  children: ReactNode
+}) {
+  const [data, setData] = useState<AppData>(initialData)
   const [error, setError] = useState<string | null>(null)
-
-  useEffect(() => {
-    let cancelled = false
-    repository
-      .getAll()
-      .then((loaded) => {
-        if (!cancelled) setData(loaded)
-      })
-      .catch((e) => {
-        console.error(e)
-        if (!cancelled) setError('データの読み込みに失敗しました')
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false)
-      })
-    return () => {
-      cancelled = true
-    }
-  }, [])
 
   /** repository 呼び出しの共通ラッパー（結果を state に反映し、失敗はメッセージ化する） */
   const run = useCallback(async (task: () => Promise<AppData>) => {
@@ -42,45 +29,58 @@ export function AppProvider({ children }: { children: ReactNode }) {
       const next = await task()
       setData(next)
       setError(null)
+      return true
     } catch (e) {
       console.error(e)
       setError('保存に失敗しました。空き容量をご確認ください。')
+      return false
     }
   }, [])
 
   const saveSession = useCallback(
-    (session: WorkoutSession) => run(() => repository.saveSession(session)),
+    async (session: WorkoutSession) => void (await run(() => repository.saveSession(session))),
     [run],
   )
   const saveSessions = useCallback(
-    (sessions: WorkoutSession[]) => run(() => repository.saveSessions(sessions)),
+    async (sessions: WorkoutSession[]) =>
+      void (await run(() => repository.saveSessions(sessions))),
     [run],
   )
   const deleteSession = useCallback(
-    (sessionId: string) => run(() => repository.deleteSession(sessionId)),
+    async (sessionId: string) => void (await run(() => repository.deleteSession(sessionId))),
     [run],
   )
   const saveRoutine = useCallback(
-    (routine: Routine) => run(() => repository.saveRoutine(routine)),
+    async (routine: Routine) => void (await run(() => repository.saveRoutine(routine))),
     [run],
   )
   const deleteRoutine = useCallback(
-    (routineId: string) => run(() => repository.deleteRoutine(routineId)),
+    async (routineId: string) => void (await run(() => repository.deleteRoutine(routineId))),
+    [run],
+  )
+  const saveCustomExercise = useCallback(
+    async (exercise: Exercise) =>
+      void (await run(() => repository.saveCustomExercise(exercise))),
+    [run],
+  )
+  const deleteCustomExercise = useCallback(
+    async (exerciseId: string) =>
+      void (await run(() => repository.deleteCustomExercise(exerciseId))),
     [run],
   )
   const updateSettings = useCallback(
-    (patch: Partial<Settings>) => run(() => repository.updateSettings(patch)),
+    async (patch: Partial<Settings>) => void (await run(() => repository.updateSettings(patch))),
     [run],
   )
-  const importData = useCallback(
-    (raw: unknown) => run(() => repository.replaceAll(normalizeAppData(raw))),
+  const applyPlan = useCallback(
+    (plan: Extract<DataPlan, { ok: true }>) => run(async () => commitPlan(plan)),
     [run],
   )
-  const clearAll = useCallback(() => run(() => repository.clearAll()), [run])
+  const clearAll = useCallback(async () => void (await run(() => repository.clearAll())), [run])
 
   const loadSampleData = useCallback(
-    () =>
-      run(async () => {
+    async () =>
+      void (await run(async () => {
         const current = await repository.getAll()
         const sample = createSampleData()
         return repository.replaceAll({
@@ -88,7 +88,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
           sessions: [...sample.sessions, ...current.sessions],
           routines: [...current.routines, ...sample.routines],
         })
-      }),
+      })),
     [run],
   )
 
@@ -98,11 +98,12 @@ export function AppProvider({ children }: { children: ReactNode }) {
   )
   const groupMap = useMemo(() => muscleGroupMap(muscleGroups), [muscleGroups])
   const sessionsByDate = useMemo(() => groupSessionsByDate(data.sessions), [data.sessions])
+  const catalog = useMemo(() => buildCatalog(data.customExercises), [data.customExercises])
+  const exerciseById = useMemo(() => exerciseMap(catalog), [catalog])
 
   const value = useMemo<AppContextValue>(
     () => ({
       data,
-      loading,
       error,
       sessions: data.sessions,
       routines: data.routines,
@@ -110,31 +111,38 @@ export function AppProvider({ children }: { children: ReactNode }) {
       muscleGroups,
       groupMap,
       sessionsByDate,
+      catalog,
+      exerciseById,
       saveSession,
       saveSessions,
       deleteSession,
       saveRoutine,
       deleteRoutine,
+      saveCustomExercise,
+      deleteCustomExercise,
       updateSettings,
-      importData,
+      applyPlan,
       clearAll,
       loadSampleData,
       dismissError: () => setError(null),
     }),
     [
       data,
-      loading,
       error,
       muscleGroups,
       groupMap,
       sessionsByDate,
+      catalog,
+      exerciseById,
       saveSession,
       saveSessions,
       deleteSession,
       saveRoutine,
       deleteRoutine,
+      saveCustomExercise,
+      deleteCustomExercise,
       updateSettings,
-      importData,
+      applyPlan,
       clearAll,
       loadSampleData,
     ],

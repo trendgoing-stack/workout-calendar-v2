@@ -3,13 +3,16 @@ import type { ISODate, Routine } from '../types'
 import { useApp } from '../store/useApp'
 import { formatFullDateLabel, todayISO } from '../lib/date'
 import { sessionFromRoutine } from '../lib/factories'
+import { lastRecordOf } from '../lib/selectors'
+import { entryDisplayName } from '../lib/exerciseCatalog'
+import { formatSet } from '../lib/format'
 import { MuscleTag } from '../components/MuscleTag'
 import { resolveGroup } from '../lib/colors'
 import { RoutineEditor } from '../components/RoutineEditor'
 import { Sheet } from '../components/Sheet'
 
 export function RoutinesPage() {
-  const { routines, groupMap, settings, saveSession } = useApp()
+  const { routines, groupMap, settings, sessions, exerciseById, saveSession } = useApp()
   const [editor, setEditor] = useState<{ routine: Routine | null; key: string } | null>(
     null,
   )
@@ -19,7 +22,9 @@ export function RoutinesPage() {
 
   const handleApply = async () => {
     if (!applying) return
-    await saveSession(sessionFromRoutine(applying, applyDate))
+    await saveSession(
+      sessionFromRoutine(applying, applyDate, (id) => lastRecordOf(sessions, id)),
+    )
     setApplied(`${formatFullDateLabel(applyDate)} に「${applying.name}」を登録しました`)
     setApplying(null)
     window.setTimeout(() => setApplied(null), 3000)
@@ -81,11 +86,14 @@ export function RoutinesPage() {
                 <ul className="mt-2 space-y-0.5">
                   {routine.exercises.map((exercise) => (
                     <li key={exercise.id} className="text-sm text-slate-600">
-                      {exercise.name}
+                      {entryDisplayName(exerciseById, exercise)}
                       <span className="ml-2 text-xs text-slate-400">
                         {exercise.sets.length}セット
-                        {exercise.sets[0]?.weight != null &&
-                          ` / ${exercise.sets[0].weight}${settings.weightUnit}`}
+                        {exercise.sets[0] &&
+                          (exercise.sets[0].weight !== undefined ||
+                            exercise.sets[0].reps !== undefined ||
+                            exercise.sets[0].seconds !== undefined) &&
+                          ` / ${formatSet(exercise.sets[0], exercise.recordTypeSnapshot, settings.weightUnit)}`}
                       </span>
                     </li>
                   ))}

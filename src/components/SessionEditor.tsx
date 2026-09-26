@@ -1,18 +1,14 @@
 import { useMemo, useState } from 'react'
-import type { ExerciseEntry, ISODate, WorkoutSession } from '../types'
+import type { Exercise, ISODate, SessionExercise, WorkoutSession } from '../types'
 import { useApp } from '../store/useApp'
-import {
-  createExercise,
-  createSession,
-  createSet,
-  isSessionEmpty,
-  pruneSession,
-  routineFromSession,
-} from '../lib/factories'
-import { exerciseNameSuggestions, lastMuscleGroupsByExercise } from '../lib/selectors'
+import { createSession, createSessionExercise, routineFromSession } from '../lib/factories'
+import { lastRecordOf } from '../lib/selectors'
+import { resolveExercise } from '../lib/exerciseCatalog'
+import { invalidFieldsOf, stripUnusedFields } from '../lib/setValidation'
+import type { SetField } from '../lib/setValidation'
 import { ConfirmDialog, Sheet } from './Sheet'
-import { MuscleTagPicker } from './MuscleTag'
-import { ExerciseNameInput } from './ExerciseNameInput'
+import { ExerciseBlock } from './ExerciseBlock'
+import { ExercisePicker } from './ExercisePicker'
 
 interface Props {
   open: boolean
@@ -23,26 +19,64 @@ interface Props {
   onClose: () => void
 }
 
+/** 保存用に、記録タイプで使わない値を取り除く */
+function cleanSession(session: WorkoutSession): WorkoutSession {
+  return {
+    ...session,
+    memo: session.memo.trim(),
+    exercises: session.exercises.map((e) => ({
+      ...e,
+      sets: e.sets.map((s) => stripUnusedFields(s, e.recordTypeSnapshot, e.weighted)),
+    })),
+  }
+}
+
 /** トレーニング記録の入力・編集画面 */
 export function SessionEditor({ open, date, session, onClose }: Props) {
-  const { muscleGroups, sessions, saveSession, deleteSession, saveRoutine, settings } =
-    useApp()
+  const {
+    muscleGroups,
+    groupMap,
+    sessions,
+    sessionsByDate,
+    exerciseById,
+    saveSession,
+    deleteSession,
+    saveRoutine,
+    settings,
+  } = useApp()
 
   // シートを開くたびに初期値を作り直す（key で再マウントされる想定）
-  const [draft, setDraft] = useState<WorkoutSession>(
-    () => session ?? createSession(date),
-  )
+  const [draft, setDraft] = useState<WorkoutSession>(() => session ?? createSession(date))
   const [confirmDelete, setConfirmDelete] = useState(false)
   const [saveAsRoutine, setSaveAsRoutine] = useState(false)
   const [routineName, setRoutineName] = useState('')
-
-  const suggestions = useMemo(() => exerciseNameSuggestions(sessions), [sessions])
-  const lastGroups = useMemo(() => lastMuscleGroupsByExercise(sessions), [sessions])
+  const [pickerOpen, setPickerOpen] = useState(false)
+  /** 一度保存しようとして失敗したら、以後は入力のたびに赤枠を更新する */
+  const [showErrors, setShowErrors] = useState(false)
   const unit = settings.weightUnit
+
+  const invalidByExercise = useMemo(() => {
+    const map = new Map<string, Map<string, SetField[]>>()
+    for (const e of draft.exercises) {
+      const bad = invalidFieldsOf(e, unit)
+      if (bad.size > 0) map.set(e.id, bad)
+    }
+    return map
+  }, [draft.exercises, unit])
+
+  /** 同じ日の記録にすでに入っている種目（編集中の下書きと、同じ日のほかの記録） */
+  const addedIds = useMemo(() => {
+    const ids = new Set(draft.exercises.map((e) => e.exerciseId))
+    for (const s of sessionsByDate.get(draft.date) ?? []) {
+      if (s.id === draft.id) continue
+      for (const e of s.exercises) ids.add(e.exerciseId)
+    }
+    return ids
+  }, [draft, sessionsByDate])
 
   const updateExercise = (
     exerciseId: string,
-    updater: (exercise: ExerciseEntry) => ExerciseEntry,
+    updater: (exercise: SessionExercise) => SessionExercise,
   ) => {
     setDraft((prev) => ({
       ...prev,
@@ -50,11 +84,28 @@ export function SessionEditor({ open, date, session, onClose }: Props) {
     }))
   }
 
-  const canSave = !isSessionEmpty(draft)
+  const addExercises = (exercises: Exercise[]) => {
+    setDraft((prev) => ({
+      ...prev,
+      exercises: [
+        ...prev.exercises,
+        ...exercises.map((exercise) =>
+          createSessionExercise(exercise, lastRecordOf(sessions, exercise.id, prev.id)),
+        ),
+      ],
+    }))
+    setPickerOpen(false)
+  }
+
+  const canSave = draft.exercises.length > 0 || draft.memo.trim().length > 0
 
   const handleSave = async () => {
     if (!canSave) return
-    await saveSession(pruneSession(draft))
+    if (invalidByExercise.size > 0) {
+      setShowErrors(true)
+      return
+    }
+    await saveSession(cleanSession(draft))
     onClose()
   }
 
@@ -67,10 +118,12 @@ export function SessionEditor({ open, date, session, onClose }: Props) {
   const handleSaveRoutine = async () => {
     const name = routineName.trim()
     if (!name) return
-    await saveRoutine(routineFromSession(pruneSession(draft), name))
+    await saveRoutine(routineFromSession(cleanSession(draft), name))
     setSaveAsRoutine(false)
     setRoutineName('')
   }
+
+  const errorVisible = showErrors && invalidByExercise.size > 0
 
   return (
     <Sheet
@@ -78,24 +131,31 @@ export function SessionEditor({ open, date, session, onClose }: Props) {
       onClose={onClose}
       title={session ? '記録を編集' : '記録を追加'}
       footer={
-        <div className="flex gap-2">
-          {session && (
+        <div className="space-y-2">
+          {errorVisible && (
+            <p className="text-center text-xs text-red-500">
+              赤枠の欄を入力してください（入力できる範囲を超えている値もあります）
+            </p>
+          )}
+          <div className="flex gap-2">
+            {session && (
+              <button
+                type="button"
+                onClick={() => setConfirmDelete(true)}
+                className="rounded-xl bg-red-50 px-4 py-3 text-sm font-medium text-red-500"
+              >
+                削除
+              </button>
+            )}
             <button
               type="button"
-              onClick={() => setConfirmDelete(true)}
-              className="rounded-xl bg-red-50 px-4 py-3 text-sm font-medium text-red-500"
+              onClick={handleSave}
+              disabled={!canSave}
+              className="flex-1 rounded-xl bg-indigo-600 py-3 text-sm font-semibold text-white disabled:bg-slate-200 disabled:text-slate-400"
             >
-              削除
+              保存
             </button>
-          )}
-          <button
-            type="button"
-            onClick={handleSave}
-            disabled={!canSave}
-            className="flex-1 rounded-xl bg-indigo-600 py-3 text-sm font-semibold text-white disabled:bg-slate-200 disabled:text-slate-400"
-          >
-            保存
-          </button>
+          </div>
         </div>
       }
     >
@@ -112,162 +172,28 @@ export function SessionEditor({ open, date, session, onClose }: Props) {
           />
         </label>
 
-        {draft.exercises.map((exercise, index) => (
-          <article
-            key={exercise.id}
-            className="space-y-3 rounded-xl border border-slate-200 bg-slate-50/60 p-3"
-          >
-            <div className="flex items-start gap-2">
-              <div className="flex-1">
-                <ExerciseNameInput
-                  value={exercise.name}
-                  suggestions={suggestions}
-                  onChange={(name) =>
-                    updateExercise(exercise.id, (e) => ({ ...e, name }))
-                  }
-                  onPick={(name) =>
-                    updateExercise(exercise.id, (e) => ({
-                      ...e,
-                      name,
-                      // 部位が未選択なら、前回その種目に付けた部位を引き継ぐ
-                      muscleGroupIds:
-                        e.muscleGroupIds.length > 0
-                          ? e.muscleGroupIds
-                          : (lastGroups.get(name) ?? []),
-                    }))
-                  }
-                />
-              </div>
-              {draft.exercises.length > 1 && (
-                <button
-                  type="button"
-                  aria-label={`${index + 1}番目の種目を削除`}
-                  onClick={() =>
-                    setDraft((prev) => ({
-                      ...prev,
-                      exercises: prev.exercises.filter((e) => e.id !== exercise.id),
-                    }))
-                  }
-                  className="mt-1 rounded-full p-1.5 text-slate-300 hover:bg-slate-200 hover:text-slate-500"
-                >
-                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
-                    <path d="M18 6 6 18M6 6l12 12" />
-                  </svg>
-                </button>
-              )}
-            </div>
-
-            <MuscleTagPicker
-              groups={muscleGroups}
-              selected={exercise.muscleGroupIds}
-              onToggle={(id) =>
-                updateExercise(exercise.id, (e) => ({
-                  ...e,
-                  muscleGroupIds: e.muscleGroupIds.includes(id)
-                    ? e.muscleGroupIds.filter((v) => v !== id)
-                    : [...e.muscleGroupIds, id],
-                }))
-              }
-            />
-
-            <div className="space-y-1.5">
-              <div className="flex items-center gap-2 px-1 text-[11px] text-slate-400">
-                <span className="w-6">セット</span>
-                <span className="flex-1">重量({unit})</span>
-                <span className="flex-1">回数</span>
-                <span className="w-7" />
-              </div>
-              {exercise.sets.map((set, setIndex) => (
-                <div key={set.id} className="flex items-center gap-2">
-                  <span className="w-6 text-center text-xs font-medium text-slate-400">
-                    {setIndex + 1}
-                  </span>
-                  <input
-                    type="number"
-                    inputMode="decimal"
-                    step="0.5"
-                    value={set.weight ?? ''}
-                    placeholder="-"
-                    className="w-full flex-1 rounded-lg border border-slate-200 px-2 py-2 text-center outline-none focus:border-indigo-400"
-                    onChange={(e) =>
-                      updateExercise(exercise.id, (ex) => ({
-                        ...ex,
-                        sets: ex.sets.map((s) =>
-                          s.id === set.id
-                            ? { ...s, weight: e.target.value === '' ? null : Number(e.target.value) }
-                            : s,
-                        ),
-                      }))
-                    }
-                  />
-                  <input
-                    type="number"
-                    inputMode="numeric"
-                    value={set.reps ?? ''}
-                    placeholder="-"
-                    className="w-full flex-1 rounded-lg border border-slate-200 px-2 py-2 text-center outline-none focus:border-indigo-400"
-                    onChange={(e) =>
-                      updateExercise(exercise.id, (ex) => ({
-                        ...ex,
-                        sets: ex.sets.map((s) =>
-                          s.id === set.id
-                            ? { ...s, reps: e.target.value === '' ? null : Number(e.target.value) }
-                            : s,
-                        ),
-                      }))
-                    }
-                  />
-                  <button
-                    type="button"
-                    aria-label={`${setIndex + 1}セット目を削除`}
-                    onClick={() =>
-                      updateExercise(exercise.id, (ex) => ({
-                        ...ex,
-                        sets: ex.sets.filter((s) => s.id !== set.id),
-                      }))
-                    }
-                    className="w-7 rounded-full py-2 text-slate-300 hover:text-red-400"
-                  >
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" className="mx-auto">
-                      <path d="M5 12h14" />
-                    </svg>
-                  </button>
-                </div>
-              ))}
-              <button
-                type="button"
-                onClick={() =>
-                  updateExercise(exercise.id, (ex) => ({
-                    ...ex,
-                    sets: [...ex.sets, createSet(ex.sets.at(-1))],
-                  }))
-                }
-                className="w-full rounded-lg border border-dashed border-slate-300 py-2 text-xs font-medium text-slate-500"
-              >
-                + セットを追加
-              </button>
-            </div>
-
-            <input
-              type="text"
-              value={exercise.memo}
-              placeholder="この種目のメモ（任意）"
-              className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none focus:border-indigo-400"
-              onChange={(e) =>
-                updateExercise(exercise.id, (ex) => ({ ...ex, memo: e.target.value }))
-              }
-            />
-          </article>
+        {draft.exercises.map((entry) => (
+          <ExerciseBlock
+            key={entry.id}
+            entry={entry}
+            exercise={resolveExercise(exerciseById, entry)}
+            muscleGroups={muscleGroups}
+            groupMap={groupMap}
+            unit={unit}
+            invalid={showErrors ? invalidByExercise.get(entry.id) : undefined}
+            onChange={(updater) => updateExercise(entry.id, updater)}
+            onRemove={() =>
+              setDraft((prev) => ({
+                ...prev,
+                exercises: prev.exercises.filter((e) => e.id !== entry.id),
+              }))
+            }
+          />
         ))}
 
         <button
           type="button"
-          onClick={() =>
-            setDraft((prev) => ({
-              ...prev,
-              exercises: [...prev.exercises, createExercise()],
-            }))
-          }
+          onClick={() => setPickerOpen(true)}
           className="w-full rounded-xl border border-dashed border-indigo-300 py-3 text-sm font-semibold text-indigo-600"
         >
           + 種目を追加
@@ -284,7 +210,7 @@ export function SessionEditor({ open, date, session, onClose }: Props) {
           />
         </label>
 
-        {canSave && (
+        {draft.exercises.length > 0 && (
           <div className="rounded-xl bg-slate-50 p-3">
             {saveAsRoutine ? (
               <div className="space-y-2">
@@ -328,6 +254,14 @@ export function SessionEditor({ open, date, session, onClose }: Props) {
           </div>
         )}
       </div>
+
+      {pickerOpen && (
+        <ExercisePicker
+          addedIds={addedIds}
+          onConfirm={addExercises}
+          onClose={() => setPickerOpen(false)}
+        />
+      )}
 
       <ConfirmDialog
         open={confirmDelete}

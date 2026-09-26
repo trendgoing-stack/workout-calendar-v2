@@ -2,10 +2,12 @@
  * Service Worker：キャッシュ優先で完全オフライン動作させる。
  *
  * このファイルはテンプレート。`npm run build` のときに vite.config.ts の
- * serviceWorker プラグインが下の3つの値を埋め込み、dist/sw.js として出力する。
- *   VERSION  … package.json の version（画面に表示するバージョン）
- *   BUILD_ID … ビルド結果の中身から計算したハッシュ。中身が変われば必ず変わる
- *   ASSETS   … キャッシュするファイルの一覧（ビルド結果から自動生成）
+ * serviceWorker プラグインが下の4つの値を埋め込み、dist/sw.js として出力する。
+ *   VERSION      … package.json の version（画面に表示するバージョン）
+ *   BUILD_ID     … ビルド結果の中身から計算したハッシュ。中身が変われば必ず変わる
+ *   ASSETS       … キャッシュするファイルの一覧（ビルド結果から自動生成。
+ *                  public/exercises/ のイラストもここに含まれ、事前キャッシュされる）
+ *   CACHE_PREFIX … src/config/app.ts の cachePrefix
  *
  * 更新の流れ：
  *  1. 中身の違うビルドを公開すると BUILD_ID が変わり、sw.js 自体が変化する
@@ -15,13 +17,14 @@
  *  4. 切り替わった SW が古いキャッシュを削除する
  *
  * パスはすべて「この sw.js が置かれている場所」からの相対で解決するので、
- * GitHub Pages のサブパス配信（/workout-calendar/）でもそのまま動く。
+ * GitHub Pages のサブパス配信（/<リポジトリ名>/）でもそのまま動く。
  */
 const VERSION = '__APP_VERSION__'
 const BUILD_ID = '__BUILD_ID__'
 const ASSETS = [/* __ASSETS__ */]
 
-const CACHE_PREFIX = 'workout-calendar-'
+/** キャッシュ名のプレフィックス（src/config/app.ts の cachePrefix。既存版のキャッシュと区別する） */
+const CACHE_PREFIX = '__CACHE_PREFIX__'
 const CACHE_NAME = `${CACHE_PREFIX}${VERSION}-${BUILD_ID}`
 
 /** この Service Worker が担当する範囲のルート URL（例: https://user.github.io/repo/） */

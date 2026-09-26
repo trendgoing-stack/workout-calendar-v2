@@ -3,9 +3,17 @@ import type { MuscleGroup, WeekStart, WeightUnit } from '../types'
 import { useApp } from '../store/useApp'
 import { COLOR_PALETTE } from '../lib/constants'
 import { createId } from '../lib/id'
-import { downloadJson, readJsonFile } from '../lib/backup'
-import { looksLikeAppData } from '../lib/normalize'
+import { downloadJson } from '../lib/backup'
+import { planFromJson } from '../lib/dataImport'
+import type { DataPlan } from '../lib/dataImport'
+import type { MigrationReport } from '../lib/migrate'
+import { readLegacyRaw } from '../lib/storage'
 import { ConfirmDialog } from '../components/Sheet'
+import { CustomExerciseSection } from '../components/CustomExerciseSection'
+import { DataErrorDialog, MigrationResultDialog } from '../components/MigrationDialogs'
+
+type OkPlan = Extract<DataPlan, { ok: true }>
+type ErrorPlan = Extract<DataPlan, { ok: false }>
 
 export function SettingsPage() {
   const {
@@ -15,13 +23,20 @@ export function SettingsPage() {
     sessions,
     routines,
     updateSettings,
-    importData,
+    applyPlan,
     clearAll,
     loadSampleData,
   } = useApp()
 
   const fileInput = useRef<HTMLInputElement>(null)
-  const [pendingImport, setPendingImport] = useState<unknown>(null)
+  /** 確認待ちの取り込み（インポート、または旧アプリのデータ） */
+  const [pendingImport, setPendingImport] = useState<
+    { plan: OkPlan; source: 'file' | 'legacy' } | null
+  >(null)
+  const [importError, setImportError] = useState<ErrorPlan | null>(null)
+  const [migrationReport, setMigrationReport] = useState<MigrationReport | null>(null)
+  // 同じブラウザに旧アプリのデータがあるときだけ「旧アプリのデータを取り込む」を出す
+  const [hasLegacy] = useState(() => readLegacyRaw() !== null)
   const [confirmClear, setConfirmClear] = useState(false)
   const [confirmDeleteGroup, setConfirmDeleteGroup] = useState<MuscleGroup | null>(null)
   const [message, setMessage] = useState<string | null>(null)
@@ -59,17 +74,27 @@ export function SettingsPage() {
       ],
     })
 
+  const startImport = (raw: string, source: 'file' | 'legacy') => {
+    const plan = planFromJson(raw)
+    if (plan.ok) setPendingImport({ plan, source })
+    else setImportError(plan)
+  }
+
   const handleFile = async (file: File) => {
     try {
-      const parsed = await readJsonFile(file)
-      if (!looksLikeAppData(parsed)) {
-        notify('このファイルは読み込めませんでした')
-        return
-      }
-      setPendingImport(parsed)
+      startImport(await file.text(), 'file')
     } catch {
-      notify('JSON の読み込みに失敗しました')
+      notify('ファイルを読み込めませんでした')
     }
+  }
+
+  const handleLegacy = () => {
+    const raw = readLegacyRaw()
+    if (raw === null) {
+      notify('旧アプリのデータが見つかりませんでした')
+      return
+    }
+    startImport(raw, 'legacy')
   }
 
   return (
@@ -197,6 +222,8 @@ export function SettingsPage() {
         </div>
       </section>
 
+      <CustomExerciseSection />
+
       <section className="rounded-2xl bg-white p-4 shadow-sm">
         <h2 className="mb-1 text-sm font-semibold text-slate-700">データ</h2>
         <p className="mb-3 text-xs text-slate-400">
@@ -234,6 +261,16 @@ export function SettingsPage() {
             }}
           />
 
+          {hasLegacy && (
+            <button
+              type="button"
+              onClick={handleLegacy}
+              className="w-full rounded-lg bg-indigo-50 py-2.5 text-sm font-medium text-indigo-700"
+            >
+              旧アプリのデータを取り込む
+            </button>
+          )}
+
           {sessions.length === 0 && (
             <button
               type="button"
@@ -268,18 +305,49 @@ export function SettingsPage() {
 
       <ConfirmDialog
         open={pendingImport !== null}
-        title="データをインポートしますか？"
-        message="現在のデータはすべて置き換わります。念のため先にエクスポートしておくことをおすすめします。"
-        confirmLabel="インポート"
+        title={
+          pendingImport?.source === 'legacy'
+            ? '旧アプリのデータを取り込みますか？'
+            : 'データをインポートしますか？'
+        }
+        message={
+          <>
+            新版の現在のデータを置き換えます。念のため先にエクスポートしておくことをおすすめします。
+            {pendingImport?.source === 'legacy' && (
+              <span className="mt-2 block text-xs text-slate-500">
+                旧アプリのデータは読み取るだけで、変更・削除はしません。
+              </span>
+            )}
+          </>
+        }
+        confirmLabel="置き換える"
         destructive
         onConfirm={async () => {
-          const payload = pendingImport
+          const pending = pendingImport
           setPendingImport(null)
-          await importData(payload)
-          notify('インポートしました')
+          if (!pending) return
+          const ok = await applyPlan(pending.plan)
+          if (!ok) return
+          if (pending.plan.migratedFrom) setMigrationReport(pending.plan.migratedFrom.report)
+          else notify('インポートしました')
         }}
         onCancel={() => setPendingImport(null)}
       />
+
+      {importError && (
+        <DataErrorDialog
+          error={importError.error}
+          raw={importError.raw}
+          onClose={() => setImportError(null)}
+        />
+      )}
+
+      {migrationReport && (
+        <MigrationResultDialog
+          report={migrationReport}
+          onClose={() => setMigrationReport(null)}
+        />
+      )}
 
       <ConfirmDialog
         open={confirmClear}

@@ -1,20 +1,20 @@
 import type { AppData, ExportFile } from '../types'
+import { APP_CONFIG } from '../config/app'
 import { todayISO } from './date'
 import { nowIso } from './id'
 
 /** エクスポート用の JSON を組み立てる */
 export function buildExportFile(data: AppData): ExportFile {
-  return { ...data, app: 'workout-calendar', exportedAt: nowIso() }
+  return { ...data, app: APP_CONFIG.exportAppId, exportedAt: nowIso() }
 }
 
-/** JSON ファイルとしてダウンロードさせる */
-export function downloadJson(data: AppData): void {
-  const content = JSON.stringify(buildExportFile(data), null, 2)
+/** 文字列を JSON ファイルとしてダウンロードさせる */
+export function downloadText(content: string, filename: string): void {
   const blob = new Blob([content], { type: 'application/json' })
   const url = URL.createObjectURL(blob)
   const anchor = document.createElement('a')
   anchor.href = url
-  anchor.download = `workout-calendar-${todayISO()}.json`
+  anchor.download = filename
   document.body.appendChild(anchor)
   anchor.click()
   anchor.remove()
@@ -22,8 +22,15 @@ export function downloadJson(data: AppData): void {
   window.setTimeout(() => URL.revokeObjectURL(url), 1000)
 }
 
-/** 選択されたファイルを読み込んで JSON に変換する */
-export async function readJsonFile(file: File): Promise<unknown> {
-  const text = await file.text()
-  return JSON.parse(text) as unknown
+/** 現在のデータを JSON ファイルとしてダウンロードさせる */
+export function downloadJson(data: AppData): void {
+  downloadText(
+    JSON.stringify(buildExportFile(data), null, 2),
+    `${APP_CONFIG.exportAppId}-${todayISO()}.json`,
+  )
+}
+
+/** 移行に失敗した元データをそのままダウンロードさせる */
+export function downloadRawBackup(raw: string): void {
+  downloadText(raw, `${APP_CONFIG.exportAppId}-original-${todayISO()}.json`)
 }

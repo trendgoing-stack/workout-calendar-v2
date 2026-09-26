@@ -1,4 +1,4 @@
-import type { ISODate, MuscleGroup, WeekStart, WorkoutSession } from '../types'
+import type { ISODate, MuscleGroup, SetEntry, WeekStart, WorkoutSession } from '../types'
 import {
   addDays,
   addMonths,
@@ -46,46 +46,51 @@ export function sessionSetCount(session: WorkoutSession): number {
   return session.exercises.reduce((total, e) => total + e.sets.length, 0)
 }
 
-/**
- * 過去に入力した種目名を、よく使う順・新しい順で返す（サジェスト用）
- */
-export function exerciseNameSuggestions(sessions: WorkoutSession[]): string[] {
-  const stats = new Map<string, { count: number; lastDate: ISODate }>()
-  for (const session of sessions) {
-    for (const exercise of session.exercises) {
-      const key = exercise.name.trim()
-      if (!key) continue
-      const current = stats.get(key)
-      if (current) {
-        current.count += 1
-        if (session.date > current.lastDate) current.lastDate = session.date
-      } else {
-        stats.set(key, { count: 1, lastDate: session.date })
-      }
-    }
-  }
-  return [...stats.entries()]
-    .sort((a, b) =>
-      b[1].count - a[1].count || (a[1].lastDate < b[1].lastDate ? 1 : -1),
-    )
-    .map(([name]) => name)
+/** 前回の記録（初期値の入力に使う） */
+export interface LastRecord {
+  /** 最終セット */
+  lastSet?: SetEntry
+  weighted: boolean
 }
 
-/** 種目名 -> 直近で使った部位タグ（入力補助用） */
-export function lastMuscleGroupsByExercise(
+/**
+ * その種目の前回記録（いちばん新しい日の、その種目の最後のブロック）。
+ * 編集中のセッション自身は除く。sessions は新しい順に並んでいる前提。
+ */
+export function lastRecordOf(
   sessions: WorkoutSession[],
-): Map<string, string[]> {
-  const map = new Map<string, string[]>()
-  // sessions は新しい順に並んでいる前提。先に入ったものを優先する
+  exerciseId: string,
+  excludeSessionId?: string,
+): LastRecord | undefined {
+  for (const session of sessions) {
+    if (session.id === excludeSessionId) continue
+    const found = session.exercises.filter((e) => e.exerciseId === exerciseId).at(-1)
+    if (found) return { lastSet: found.sets.at(-1), weighted: found.weighted === true }
+  }
+  return undefined
+}
+
+/** 直近に記録した種目 ID（新しい順・重複なし） */
+export function recentExerciseIds(sessions: WorkoutSession[], limit = 10): string[] {
+  const ids: string[] = []
   for (const session of sessions) {
     for (const exercise of session.exercises) {
-      const key = exercise.name.trim()
-      if (key && !map.has(key) && exercise.muscleGroupIds.length > 0) {
-        map.set(key, exercise.muscleGroupIds)
-      }
+      if (!ids.includes(exercise.exerciseId)) ids.push(exercise.exerciseId)
+      if (ids.length >= limit) return ids
     }
   }
-  return map
+  return ids
+}
+
+/** 記録のある種目 ID（よく行う順） */
+export function usedExerciseIds(sessions: WorkoutSession[]): string[] {
+  const counts = new Map<string, number>()
+  for (const session of sessions) {
+    for (const exercise of session.exercises) {
+      counts.set(exercise.exerciseId, (counts.get(exercise.exerciseId) ?? 0) + 1)
+    }
+  }
+  return [...counts.entries()].sort((a, b) => b[1] - a[1]).map(([id]) => id)
 }
 
 export interface PeriodBucket {
@@ -173,26 +178,29 @@ export function frequencyByPeriod(
 
 export interface ExerciseProgressPoint {
   date: ISODate
-  /** その日の最大重量 */
+  /** その日の最大重量（重量の無い日は 0） */
   maxWeight: number
   /** その日の総ボリューム（重量 × 回数） */
   volume: number
   /** 推定1RM（Epley 式）。重量が無い種目では 0 */
   estimated1RM: number
-  totalReps: number
+  /** 1セットの最大回数 */
+  maxReps: number
+  /** 最長秒数 */
+  maxSeconds: number
   setCount: number
 }
 
 /** ある種目の推移（日付の古い順） */
 export function exerciseProgress(
   sessions: WorkoutSession[],
-  exerciseName: string,
+  exerciseId: string,
 ): ExerciseProgressPoint[] {
   const byDate = new Map<ISODate, ExerciseProgressPoint>()
 
   for (const session of sessions) {
     for (const exercise of session.exercises) {
-      if (exercise.name.trim() !== exerciseName) continue
+      if (exercise.exerciseId !== exerciseId) continue
       const point =
         byDate.get(session.date) ??
         {
@@ -200,15 +208,17 @@ export function exerciseProgress(
           maxWeight: 0,
           volume: 0,
           estimated1RM: 0,
-          totalReps: 0,
+          maxReps: 0,
+          maxSeconds: 0,
           setCount: 0,
         }
       for (const set of exercise.sets) {
         const weight = set.weight ?? 0
         const reps = set.reps ?? 0
         point.maxWeight = Math.max(point.maxWeight, weight)
+        point.maxReps = Math.max(point.maxReps, reps)
+        point.maxSeconds = Math.max(point.maxSeconds, set.seconds ?? 0)
         point.volume += weight * reps
-        point.totalReps += reps
         point.setCount += 1
         if (weight > 0 && reps > 0) {
           point.estimated1RM = Math.max(

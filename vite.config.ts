@@ -5,6 +5,7 @@ import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
 import { defineConfig } from 'vite'
 import type { Plugin } from 'vite'
+import { APP_CONFIG } from './src/config/app.ts'
 
 /** 画面に表示するバージョン。上げるときは `npm version patch --no-git-tag-version` など */
 const APP_VERSION: string = JSON.parse(readFileSync('package.json', 'utf8')).version
@@ -50,6 +51,7 @@ function serviceWorker(): Plugin {
       const replacements: Array<[string, string]> = [
         [`'__APP_VERSION__'`, JSON.stringify(APP_VERSION)],
         [`'__BUILD_ID__'`, JSON.stringify(buildId)],
+        [`'__CACHE_PREFIX__'`, JSON.stringify(APP_CONFIG.cachePrefix)],
         ['[/* __ASSETS__ */]', JSON.stringify(files.map((path) => `./${path}`), null, 2)],
       ]
       let code = template
@@ -65,16 +67,68 @@ function serviceWorker(): Plugin {
   }
 }
 
+/** manifest.webmanifest の中身（公開パスやアプリ名は src/config/app.ts から） */
+function buildManifest(): string {
+  const manifest = {
+    id: APP_CONFIG.manifestId,
+    name: APP_CONFIG.appName,
+    short_name: APP_CONFIG.shortName,
+    description: APP_CONFIG.description,
+    start_url: APP_CONFIG.basePath,
+    scope: APP_CONFIG.basePath,
+    display: 'standalone',
+    orientation: 'portrait',
+    background_color: '#f4f5f7',
+    theme_color: '#4f46e5',
+    lang: 'ja',
+    icons: [
+      { src: 'icons/icon-192.png', sizes: '192x192', type: 'image/png', purpose: 'any' },
+      { src: 'icons/icon-512.png', sizes: '512x512', type: 'image/png', purpose: 'any' },
+      {
+        src: 'icons/icon-maskable-512.png',
+        sizes: '512x512',
+        type: 'image/png',
+        purpose: 'maskable',
+      },
+    ],
+  }
+  return JSON.stringify(manifest, null, 2)
+}
+
+/**
+ * src/config/app.ts の値を、manifest.webmanifest と index.html に反映する。
+ * index.html の __APP_NAME__ などを置き換え、manifest はビルド時に生成する（開発中はその場で返す）。
+ */
+function appConfig(): Plugin {
+  return {
+    name: 'workout-calendar:app-config',
+    transformIndexHtml(html) {
+      return html
+        .replaceAll('__APP_NAME__', APP_CONFIG.appName)
+        .replaceAll('__APP_SHORT_NAME__', APP_CONFIG.shortName)
+        .replaceAll('__APP_DESCRIPTION__', APP_CONFIG.description)
+    },
+    configureServer(server) {
+      server.middlewares.use((req, res, next) => {
+        if (req.url?.split('?')[0] !== `${APP_CONFIG.basePath}manifest.webmanifest`) return next()
+        res.setHeader('Content-Type', 'application/manifest+json')
+        res.end(buildManifest())
+      })
+    },
+    generateBundle() {
+      this.emitFile({ type: 'asset', fileName: 'manifest.webmanifest', source: buildManifest() })
+    },
+  }
+}
+
 // https://vite.dev/config/
 export default defineConfig({
-  // 相対パスで出力する。こうすると GitHub Pages のような
-  // サブパス配信（https://user.github.io/repo/）でも、
-  // Netlify のようなドメイン直下でも、同じビルドがそのまま動く。
-  base: './',
+  // 公開パス（GitHub Pages のリポジトリ名）。src/config/app.ts で設定する
+  base: APP_CONFIG.basePath,
   define: {
     __APP_VERSION__: JSON.stringify(APP_VERSION),
   },
-  plugins: [react(), tailwindcss(), serviceWorker()],
+  plugins: [react(), tailwindcss(), appConfig(), serviceWorker()],
   server: {
     host: true, // iPhone から LAN 経由で開けるように
   },

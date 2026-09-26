@@ -1,10 +1,7 @@
 import type { MuscleGroup, Settings } from '../types'
 
-/** localStorage のキー */
-export const STORAGE_KEY = 'workout-calendar:data'
-
 /** 現在のスキーマバージョン */
-export const SCHEMA_VERSION = 1
+export const SCHEMA_VERSION = 2
 
 /** 初期状態の部位タグ。色は設定画面から変更できる */
 export const DEFAULT_MUSCLE_GROUPS: MuscleGroup[] = [

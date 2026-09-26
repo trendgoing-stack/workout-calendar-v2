@@ -1,7 +1,7 @@
-import type { AppData, Routine, Settings, WorkoutSession } from '../types'
+import type { AppData, Exercise, Routine, Settings, WorkoutSession } from '../types'
 import { nowIso } from './id'
-import { normalizeAppData } from './normalize'
-import { clearAppData, readAppData, writeAppData } from './storage'
+import { createEmptyAppData, normalizeAppData } from './normalize'
+import { readDataRaw, removeData, writeDataRaw } from './storage'
 
 /**
  * データ操作の窓口。
@@ -17,6 +17,10 @@ export interface WorkoutRepository {
   deleteSession(sessionId: string): Promise<AppData>
   saveRoutine(routine: Routine): Promise<AppData>
   deleteRoutine(routineId: string): Promise<AppData>
+  /** カスタム種目を新規追加または更新する */
+  saveCustomExercise(exercise: Exercise): Promise<AppData>
+  /** カスタム種目を削除する。記録・ルーティンで使用中なら非表示（archived）にする */
+  deleteCustomExercise(exerciseId: string): Promise<AppData>
   updateSettings(patch: Partial<Settings>): Promise<AppData>
   /** インポート用。全データを置き換える */
   replaceAll(data: AppData): Promise<AppData>
@@ -35,14 +39,22 @@ function upsertSession(sessions: WorkoutSession[], session: WorkoutSession): Wor
   return sortSessions(copy)
 }
 
+/** その種目が記録またはルーティンで使われているか */
+export function isExerciseInUse(data: AppData, exerciseId: string): boolean {
+  const uses = (list: Array<{ exercises: Array<{ exerciseId: string }> }>) =>
+    list.some((item) => item.exercises.some((e) => e.exerciseId === exerciseId))
+  return uses(data.sessions) || uses(data.routines)
+}
+
 class LocalStorageRepository implements WorkoutRepository {
   private commit(data: AppData): AppData {
-    writeAppData(data)
+    writeDataRaw(JSON.stringify(data))
     return data
   }
 
   private read(): AppData {
-    return readAppData()
+    const raw = readDataRaw()
+    return raw ? normalizeAppData(JSON.parse(raw)) : createEmptyAppData()
   }
 
   async getAll(): Promise<AppData> {
@@ -87,6 +99,24 @@ class LocalStorageRepository implements WorkoutRepository {
     })
   }
 
+  async saveCustomExercise(exercise: Exercise): Promise<AppData> {
+    const data = this.read()
+    const index = data.customExercises.findIndex((e) => e.id === exercise.id)
+    const customExercises =
+      index === -1
+        ? [...data.customExercises, { ...exercise, order: data.customExercises.length }]
+        : data.customExercises.map((e) => (e.id === exercise.id ? exercise : e))
+    return this.commit({ ...data, customExercises })
+  }
+
+  async deleteCustomExercise(exerciseId: string): Promise<AppData> {
+    const data = this.read()
+    const customExercises = isExerciseInUse(data, exerciseId)
+      ? data.customExercises.map((e) => (e.id === exerciseId ? { ...e, archived: true } : e))
+      : data.customExercises.filter((e) => e.id !== exerciseId)
+    return this.commit({ ...data, customExercises })
+  }
+
   async updateSettings(patch: Partial<Settings>): Promise<AppData> {
     const data = this.read()
     return this.commit({ ...data, settings: { ...data.settings, ...patch } })
@@ -97,7 +127,7 @@ class LocalStorageRepository implements WorkoutRepository {
   }
 
   async clearAll(): Promise<AppData> {
-    clearAppData()
+    removeData()
     return this.read()
   }
 }

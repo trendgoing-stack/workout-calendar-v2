@@ -3,6 +3,8 @@ import type { ISODate } from '../types'
 import { useApp } from '../store/useApp'
 import { formatFullDateLabel } from '../lib/date'
 import { sessionFromRoutine } from '../lib/factories'
+import { lastRecordOf } from '../lib/selectors'
+import { entryDisplayName } from '../lib/exerciseCatalog'
 import { MuscleTag } from './MuscleTag'
 import { resolveGroup } from '../lib/colors'
 import { Sheet } from './Sheet'
@@ -17,13 +19,15 @@ export function RoutinePicker({
   date: ISODate
   onClose: () => void
 }) {
-  const { routines, groupMap, saveSession } = useApp()
+  const { routines, groupMap, sessions, exerciseById, saveSession } = useApp()
   const [targetDate, setTargetDate] = useState<ISODate>(date)
 
   const apply = async (routineId: string) => {
     const routine = routines.find((r) => r.id === routineId)
     if (!routine) return
-    await saveSession(sessionFromRoutine(routine, targetDate))
+    await saveSession(
+      sessionFromRoutine(routine, targetDate, (id) => lastRecordOf(sessions, id)),
+    )
     onClose()
   }
 
@@ -73,7 +77,7 @@ export function RoutinePicker({
                     ))}
                   </div>
                   <p className="mt-1 truncate text-xs text-slate-500">
-                    {routine.exercises.map((e) => e.name).join(' / ')}
+                    {routine.exercises.map((e) => entryDisplayName(exerciseById, e)).join(' / ')}
                   </p>
                 </button>
               </li>
