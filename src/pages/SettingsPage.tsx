@@ -301,6 +301,23 @@ export function SettingsPage() {
         新しいバージョンがあるときは画面上部にお知らせが出るので、タップして更新してください。
       </section>
 
+      <section className="rounded-2xl bg-white p-4 text-xs leading-relaxed text-slate-500 shadow-sm">
+        <h2 className="mb-2 text-sm font-semibold text-slate-700">旧アプリからのデータ移行</h2>
+        <p>
+          この β 版は、旧アプリ（筋トレ記録カレンダー）とは別に記録を保存します。
+          旧アプリの記録を使うときは、次の手順で移してください。
+        </p>
+        <ol className="mt-2 list-decimal space-y-1 pl-5">
+          <li>旧アプリの設定画面で「エクスポート（JSON）」を押してファイルを保存する</li>
+          <li>この画面の「インポート（JSON）」でそのファイルを選ぶ</li>
+        </ol>
+        <p className="mt-2">
+          iPhone では、Safari で開いた場合とホーム画面から開いた場合で保存場所が別々です。
+          旧アプリをホーム画面から使っていた場合、「旧アプリのデータを取り込む」ボタンは表示されないので、
+          上の手順（エクスポート → インポート）で移してください。旧アプリのデータは変更・削除されません。
+        </p>
+      </section>
+
       <p className="text-center text-xs text-slate-400">バージョン {__APP_VERSION__}</p>
 
       <ConfirmDialog

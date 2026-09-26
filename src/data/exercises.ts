@@ -5,7 +5,7 @@ import type { Exercise, RecordType } from '../types'
  *
  * 種目を追加するときの注意（README の「種目の追加」も参照）：
  * - id は英小文字とハイフン。記録データはこの id で種目を参照するので、一度公開したら変更しない
- * - イラストは public/exercises/<id>.svg に置く
+ * - イラストは public/exercises/<id>.svg に置く（PNG / WebP にするなら image で指定）
  * - 追加・変更したら package.json の version を上げる（Service Worker のキャッシュが更新される）
  * - bodyPart は部位タグの id（src/lib/constants.ts の DEFAULT_MUSCLE_GROUPS）
  * - aliases は旧データの名前照合と検索に使う。別の種目と取り違えそうな表記は入れない
@@ -20,6 +20,8 @@ type Def = {
   allowOptionalWeight?: boolean
   unilateral?: boolean
   hint: string
+  /** 省略時は 'exercises/<id>.svg'。PNG / WebP に差し替えるときだけ指定する */
+  image?: string
 }
 
 function group(bodyPart: string, defs: Def[]): Exercise[] {
@@ -27,6 +29,7 @@ function group(bodyPart: string, defs: Def[]): Exercise[] {
     aliases: [],
     allowOptionalWeight: false,
     unilateral: false,
+    image: `exercises/${def.id}.svg`,
     ...def,
     bodyPart,
     order,
