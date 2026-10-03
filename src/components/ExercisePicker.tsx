@@ -150,7 +150,7 @@ export function ExercisePicker({
         </div>
       </header>
 
-      <div className="flex-1 overflow-y-auto overscroll-contain">
+      <div className="flex-1 touch-pan-y overflow-x-hidden overflow-y-auto overscroll-contain">
         <div className="mx-auto max-w-lg px-4 py-3">
           {list.length === 0 && (
             <div className="py-6 text-center">

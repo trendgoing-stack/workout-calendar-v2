@@ -39,10 +39,14 @@ export function Sheet({
       <button
         type="button"
         aria-label="閉じる"
-        className="absolute inset-0 bg-slate-900/40"
+        className="absolute inset-0 touch-none bg-slate-900/40"
         onClick={onClose}
       />
-      <div className="relative flex max-h-[92dvh] w-full max-w-lg flex-col rounded-t-2xl bg-white shadow-xl">
+      {/*
+        touch-pan-y：シート上の指の動きは縦スクロールだけにする。
+        iPhone では幅の端数（例: 375.33px）でわずかに横へはみ出し、スワイプで左右に揺れるため
+      */}
+      <div className="relative flex max-h-[92dvh] w-full max-w-lg touch-pan-y flex-col rounded-t-2xl bg-white shadow-xl">
         <header className="safe-top flex items-center justify-between border-b border-slate-100 px-4 py-3">
           <h2 className="text-base font-semibold text-slate-800">{title}</h2>
           <button
@@ -56,7 +60,7 @@ export function Sheet({
             </svg>
           </button>
         </header>
-        <div className="flex-1 overflow-y-auto overscroll-contain px-4 py-4">{children}</div>
+        <div className="flex-1 touch-pan-y overflow-x-hidden overflow-y-auto overscroll-contain px-4 py-4">{children}</div>
         {footer ? (
           <footer className="safe-bottom border-t border-slate-100 bg-white px-4 py-3">
             {footer}

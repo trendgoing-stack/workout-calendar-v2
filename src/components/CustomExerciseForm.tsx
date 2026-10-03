@@ -96,7 +96,7 @@ export function CustomExerciseForm({
         </div>
       </header>
 
-      <div className="flex-1 overflow-y-auto overscroll-contain">
+      <div className="flex-1 touch-pan-y overflow-x-hidden overflow-y-auto overscroll-contain">
         <div className="mx-auto max-w-lg space-y-5 px-4 py-4">
           <label className="block">
             <span className="mb-1 block text-xs font-medium text-slate-500">
