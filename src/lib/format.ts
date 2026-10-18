@@ -24,6 +24,32 @@ export function formatSet(
   return weight || reps || '-'
 }
 
+/**
+ * 1種目ぶんの合計（入力中の画面に出す）。例：「合計 30回 ・ ボリューム 375kg」「合計 3:45」
+ * 未入力の欄は数えない。合計が 0 なら null。
+ */
+export function formatExerciseTotal(
+  sets: SetEntry[],
+  recordType: RecordType,
+  weighted: boolean | undefined,
+  unit: WeightUnit,
+  unilateral = false,
+): string | null {
+  const positive = (v: number | undefined) => (v !== undefined && Number.isFinite(v) && v > 0 ? v : 0)
+  if (recordType === 'time') {
+    const seconds = sets.reduce((sum, s) => sum + positive(s.seconds), 0)
+    return seconds > 0 ? `合計 ${formatSeconds(seconds)}` : null
+  }
+  const reps = sets.reduce((sum, s) => sum + positive(s.reps), 0)
+  if (reps === 0) return null
+  const parts = [`合計 ${reps}回${unilateral ? '（片側）' : ''}`]
+  if (recordType === 'weightReps' || weighted) {
+    const volume = sets.reduce((sum, s) => sum + positive(s.weight) * positive(s.reps), 0)
+    if (volume > 0) parts.push(`ボリューム ${(Math.round(volume * 10) / 10).toLocaleString()}${unit}`)
+  }
+  return parts.join(' ・ ')
+}
+
 /** 記録タイプのバッジ表示 */
 export function recordTypeBadge(recordType: RecordType): string {
   switch (recordType) {

@@ -2,7 +2,8 @@ import { useState } from 'react'
 import type { Exercise, MuscleGroup, SessionExercise, SetEntry, WeightUnit } from '../types'
 import type { SetField } from '../lib/setValidation'
 import { createSet } from '../lib/factories'
-import { formatSeconds } from '../lib/format'
+import { formatExerciseTotal, formatSeconds } from '../lib/format'
+import { Stopwatch } from './Stopwatch'
 import { resolveGroup } from '../lib/colors'
 import { ExerciseImage } from './ExerciseImage'
 import { MuscleTagPicker } from './MuscleTag'
@@ -23,6 +24,7 @@ export function ExerciseBlock({
   invalid,
   onChange,
   onRemove,
+  showStopwatch = false,
 }: {
   entry: SessionExercise
   exercise: Exercise
@@ -33,6 +35,8 @@ export function ExerciseBlock({
   invalid?: Map<string, SetField[]>
   onChange: (updater: (entry: SessionExercise) => SessionExercise) => void
   onRemove: () => void
+  /** 秒数の種目にストップウォッチを出す（記録入力画面だけ） */
+  showStopwatch?: boolean
 }) {
   const [hintOpen, setHintOpen] = useState(false)
   const group = resolveGroup(groupMap, exercise.bodyPart)
@@ -41,6 +45,13 @@ export function ExerciseBlock({
   const showWeight = recordType === 'weightReps' || (recordType === 'reps' && entry.weighted)
   const showReps = recordType !== 'time'
   const repsLabel = exercise.unilateral ? '回数（片側）' : '回数'
+  const total = formatExerciseTotal(
+    entry.sets,
+    recordType,
+    entry.weighted,
+    unit,
+    exercise.unilateral,
+  )
 
   const updateSet = (setId: string, field: SetField, raw: string) => {
     const value = raw === '' ? undefined : Number(raw)
@@ -200,6 +211,26 @@ export function ExerciseBlock({
             </button>
           </div>
         ))}
+        {total && (
+          <div className="px-1 text-right text-xs font-medium text-slate-500" aria-live="polite">
+            {total}
+          </div>
+        )}
+        {showStopwatch && recordType === 'time' && (
+          <Stopwatch
+            onRecord={(seconds) =>
+              onChange((e) => {
+                // 秒数が空のセットがあればそこに、無ければ新しいセットとして記録する
+                const index = e.sets.findIndex((s) => s.seconds === undefined)
+                if (index === -1) return { ...e, sets: [...e.sets, { ...createSet(), seconds }] }
+                return {
+                  ...e,
+                  sets: e.sets.map((s, i) => (i === index ? { ...s, seconds } : s)),
+                }
+              })
+            }
+          />
+        )}
         <button
           type="button"
           onClick={() => onChange((e) => ({ ...e, sets: [...e.sets, createSet(e.sets.at(-1))] }))}

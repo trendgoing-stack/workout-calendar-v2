@@ -9,6 +9,7 @@ import type { SetField } from '../lib/setValidation'
 import { ConfirmDialog, Sheet } from './Sheet'
 import { ExerciseBlock } from './ExerciseBlock'
 import { ExercisePicker } from './ExercisePicker'
+import { RestTimerBar } from './RestTimerBar'
 
 interface Props {
   open: boolean
@@ -132,6 +133,7 @@ export function SessionEditor({ open, date, session, onClose }: Props) {
       title={session ? '記録を編集' : '記録を追加'}
       footer={
         <div className="space-y-2">
+          <RestTimerBar />
           {errorVisible && (
             <p className="text-center text-xs text-red-500">
               赤枠の欄を入力してください（入力できる範囲を超えている値もあります）
@@ -181,6 +183,7 @@ export function SessionEditor({ open, date, session, onClose }: Props) {
             groupMap={groupMap}
             unit={unit}
             invalid={showErrors ? invalidByExercise.get(entry.id) : undefined}
+            showStopwatch
             onChange={(updater) => updateExercise(entry.id, updater)}
             onRemove={() =>
               setDraft((prev) => ({
